@@ -15,10 +15,18 @@ internal static class LanConnectInviteButtonPatch
     private const string ContinueRunInviteButtonName = "LanConnectContinueRunInviteButton";
     private const string NativeInviteContainerName = "InviteButtonContainer";
     private const string NativeInviteControlName = "InviteButton";
+    private const string RemotePlayerLoadContainerName = "RemotePlayerLoadContainer";
+    private const string PlayerListContainerName = "Container";
     private const string HookedMetaKey = "sts2_lan_connect_invite_button_hooks";
     private const string ContinueRunHookedMetaKey = "sts2_lan_connect_continue_run_invite_button_hooks";
     private const string NativeInviteManagedMetaKey = "sts2_lan_connect_native_invite_button_managed";
     private const string NativeInviteControlHookedMetaKey = "sts2_lan_connect_native_invite_control_hooks";
+    private static readonly string[] RemotePlayerContainerScenePaths =
+    {
+        "res://scenes/screens/remote_player_container.tscn",
+        "res://scenes/screens/char_select/remote_player_container.tscn",
+        "res://scenes/screens/character_select/remote_player_container.tscn"
+    };
     private static readonly Harmony NativeInviteHarmony = new("sts2_lan_connect.invite_button");
     private static bool _nativeInvitePatched;
 
@@ -176,9 +184,9 @@ internal static class LanConnectInviteButtonPatch
             return;
         }
 
-        Button? existing = screen.FindChild(ContinueRunInviteButtonName, recursive: true, owned: false) as Button;
-        Control? nativeInviteContainer = FindNativeInviteContainer(screen);
-        Control? nativeInviteControl = FindNativeInviteControl(screen, nativeInviteContainer);
+        Control? existing = screen.FindChild(ContinueRunInviteButtonName, recursive: true, owned: false) as Control;
+        Control? nativeInviteContainer = existing == null ? FindNativeInviteContainer(screen) : FindNativeInviteContainer(existing);
+        Control? nativeInviteControl = existing == null ? FindNativeInviteControl(screen, nativeInviteContainer) : FindNativeInviteControl(existing, nativeInviteContainer);
         NInvitePlayersButton? nativeInvite = nativeInviteControl as NInvitePlayersButton ?? FindNativeInviteButton(screen);
         bool shouldShow = LanConnectLobbyRuntime.Instance?.HasActiveHostedRoom == true;
         if (!shouldShow)
@@ -217,13 +225,28 @@ internal static class LanConnectInviteButtonPatch
         if (existing != null)
         {
             existing.Visible = true;
+            if (nativeInvite != null)
+            {
+                RepurposeNativeInviteButton(nativeInvite);
+            }
+            else if (nativeInviteControl != null)
+            {
+                RepurposeNativeInviteControl(nativeInviteControl, nativeInviteContainer);
+            }
             return;
         }
 
-        if (nativeInviteContainer != null)
+        Control? parent = FindContinueRunInviteParent(screen);
+        if (parent == null)
         {
-            CreateContinueRunInviteButton(nativeInviteContainer);
+            Log.Warn("sts2_lan_connect: continue-run invite parent not found.");
+            return;
         }
+
+        Control inviteControl = CreateContinueRunInviteControl();
+        parent.AddChild(inviteControl);
+        Log.Info($"sts2_lan_connect: continue-run invite button created via {source}");
+        QueueEnsureContinueRunInviteButton(screen, "continue_invite_created");
     }
 
     private static bool HasManagedLobbyInviteButton(NCharacterSelectScreen screen)
@@ -269,6 +292,17 @@ internal static class LanConnectInviteButtonPatch
         }
 
         return root.FindChild(NativeInviteControlName, recursive: true, owned: false) as Control;
+    }
+
+    private static Control? FindContinueRunInviteParent(Node root)
+    {
+        Control? remotePlayerContainer = root.FindChild(RemotePlayerLoadContainerName, recursive: true, owned: false) as Control;
+        if (remotePlayerContainer?.FindChild(PlayerListContainerName, recursive: false, owned: false) is Control listContainer)
+        {
+            return listContainer;
+        }
+
+        return remotePlayerContainer;
     }
 
     private static bool OnNativeInviteReleasePrefix(NInvitePlayersButton __instance)
@@ -346,7 +380,14 @@ internal static class LanConnectInviteButtonPatch
         if (!nativeControl.HasMeta(NativeInviteControlHookedMetaKey))
         {
             nativeControl.SetMeta(NativeInviteControlHookedMetaKey, true);
-            nativeControl.Connect(Control.SignalName.GuiInput, Callable.From<InputEvent>(OnNativeInviteControlGuiInput));
+            if (nativeControl is Button button)
+            {
+                button.Pressed += OnLobbyInvitePressed;
+            }
+            else
+            {
+                nativeControl.Connect(Control.SignalName.GuiInput, Callable.From<InputEvent>(OnNativeInviteControlGuiInput));
+            }
         }
     }
 
@@ -421,11 +462,64 @@ internal static class LanConnectInviteButtonPatch
         Log.Info("sts2_lan_connect: lobby invite button created on character select screen");
     }
 
-    private static void CreateContinueRunInviteButton(Control container)
+    private static Control CreateContinueRunInviteControl()
     {
-        Button inviteButton = new()
+        Control? nativeClone = TryCloneNativeInviteContainer();
+        if (nativeClone != null)
+        {
+            nativeClone.Name = ContinueRunInviteButtonName;
+            nativeClone.Visible = true;
+            return nativeClone;
+        }
+
+        return CreateFallbackContinueRunInviteControl();
+    }
+
+    private static Control? TryCloneNativeInviteContainer()
+    {
+        foreach (string scenePath in RemotePlayerContainerScenePaths)
+        {
+            try
+            {
+                if (!ResourceLoader.Exists(scenePath))
+                {
+                    continue;
+                }
+
+                PackedScene? scene = ResourceLoader.Load<PackedScene>(scenePath);
+                Control? sceneRoot = scene?.Instantiate<Control>();
+                Control? inviteContainer = sceneRoot == null ? null : FindNativeInviteContainer(sceneRoot);
+                if (sceneRoot == null || inviteContainer == null)
+                {
+                    sceneRoot?.QueueFree();
+                    continue;
+                }
+
+                inviteContainer.GetParent()?.RemoveChild(inviteContainer);
+                sceneRoot.QueueFree();
+                return inviteContainer;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"sts2_lan_connect: failed to clone native invite button from {scenePath}: {ex.Message}");
+            }
+        }
+
+        return null;
+    }
+
+    private static Control CreateFallbackContinueRunInviteControl()
+    {
+        Control container = new()
         {
             Name = ContinueRunInviteButtonName,
+            CustomMinimumSize = new Vector2(0f, 50f),
+            MouseFilter = Control.MouseFilterEnum.Pass
+        };
+
+        Button inviteButton = new()
+        {
+            Name = NativeInviteControlName,
             Text = "大厅邀请",
             TooltipText = "生成邀请码并复制到剪贴板，发给朋友即可一键加入。",
             CustomMinimumSize = new Vector2(200f, 50f),
@@ -444,12 +538,17 @@ internal static class LanConnectInviteButtonPatch
         inviteButton.AddThemeStyleboxOverride("normal", CreateBorderedStyle(bgColor, borderColor));
         inviteButton.AddThemeStyleboxOverride("hover", CreateBorderedStyle(hoverColor, borderColor));
         inviteButton.AddThemeStyleboxOverride("pressed", CreateBorderedStyle(pressedColor, borderColor));
-        inviteButton.Pressed += OnLobbyInvitePressed;
-
-        inviteButton.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        inviteButton.AnchorLeft = 0.5f;
+        inviteButton.AnchorRight = 0.5f;
+        inviteButton.AnchorTop = 0f;
+        inviteButton.AnchorBottom = 0f;
+        inviteButton.OffsetLeft = -100f;
+        inviteButton.OffsetRight = 100f;
+        inviteButton.OffsetTop = 0f;
+        inviteButton.OffsetBottom = 50f;
         container.Visible = true;
         container.AddChild(inviteButton);
-        Log.Info("sts2_lan_connect: fallback continue-run invite button created in native invite container");
+        return container;
     }
 
     private static void OnLobbyInvitePressed()
