@@ -12,7 +12,9 @@ namespace Sts2LanConnect.Scripts;
 internal static class LanConnectInviteButtonPatch
 {
     private const string InviteButtonName = "LanConnectLobbyInviteButton";
+    private const string ContinueRunInviteButtonName = "LanConnectContinueRunInviteButton";
     private const string HookedMetaKey = "sts2_lan_connect_invite_button_hooks";
+    private const string ContinueRunHookedMetaKey = "sts2_lan_connect_continue_run_invite_button_hooks";
     private const string NativeInviteManagedMetaKey = "sts2_lan_connect_native_invite_button_managed";
     private static readonly Harmony NativeInviteHarmony = new("sts2_lan_connect.invite_button");
     private static bool _nativeInvitePatched;
@@ -73,9 +75,32 @@ internal static class LanConnectInviteButtonPatch
         QueueEnsureInviteButton(screen, source);
     }
 
+    internal static void ScheduleEnsureInviteButton(Control screen, string source)
+    {
+        if (!GodotObject.IsInstanceValid(screen))
+        {
+            return;
+        }
+
+        if (!screen.HasMeta(ContinueRunHookedMetaKey))
+        {
+            screen.SetMeta(ContinueRunHookedMetaKey, true);
+            screen.Connect(Node.SignalName.TreeEntered, Callable.From(() => QueueEnsureContinueRunInviteButton(screen, "tree_entered")));
+            screen.Connect(Node.SignalName.Ready, Callable.From(() => QueueEnsureContinueRunInviteButton(screen, "ready")));
+            screen.Connect(CanvasItem.SignalName.VisibilityChanged, Callable.From(() => QueueEnsureContinueRunInviteButton(screen, "visibility_changed")));
+        }
+
+        QueueEnsureContinueRunInviteButton(screen, source);
+    }
+
     private static void QueueEnsureInviteButton(NCharacterSelectScreen screen, string source)
     {
         Callable.From(() => TryEnsureInviteButton(screen, source)).CallDeferred();
+    }
+
+    private static void QueueEnsureContinueRunInviteButton(Control screen, string source)
+    {
+        Callable.From(() => TryEnsureContinueRunInviteButton(screen, source)).CallDeferred();
     }
 
     private static void TryEnsureInviteButton(NCharacterSelectScreen screen, string source)
@@ -139,6 +164,50 @@ internal static class LanConnectInviteButtonPatch
 
         // Fallback: game scene layout changed or native invite control missing.
         CreateLobbyInviteButton(screen);
+    }
+
+    private static void TryEnsureContinueRunInviteButton(Control screen, string source)
+    {
+        if (!GodotObject.IsInstanceValid(screen) || !screen.IsInsideTree() || !screen.IsNodeReady())
+        {
+            return;
+        }
+
+        Button? existing = screen.FindChild(ContinueRunInviteButtonName, recursive: true, owned: false) as Button;
+        NInvitePlayersButton? nativeInvite = FindNativeInviteButton(screen);
+        bool shouldShow = LanConnectLobbyRuntime.Instance?.HasActiveHostedRoom == true;
+        if (!shouldShow)
+        {
+            if (existing != null)
+            {
+                existing.Visible = false;
+            }
+            if (nativeInvite != null && nativeInvite.HasMeta(NativeInviteManagedMetaKey))
+            {
+                nativeInvite.Visible = false;
+                if (nativeInvite.GetParent() is CanvasItem container)
+                {
+                    container.Visible = false;
+                }
+            }
+            return;
+        }
+
+        if (nativeInvite != null)
+        {
+            if (existing != null)
+            {
+                existing.Visible = false;
+            }
+
+            RepurposeNativeInviteButton(nativeInvite);
+            return;
+        }
+
+        if (existing != null)
+        {
+            existing.Visible = true;
+        }
     }
 
     private static bool HasManagedLobbyInviteButton(NCharacterSelectScreen screen)
@@ -312,4 +381,5 @@ internal static class LanConnectInviteButtonPatch
             ContentMarginBottom = 8,
         };
     }
+
 }

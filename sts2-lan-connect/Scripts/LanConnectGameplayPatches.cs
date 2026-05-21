@@ -27,6 +27,7 @@ internal static class LanConnectGameplayPatches
         var applied = 0;
         var failed = 0;
 
+        if (TryApplyGroup("SaveManager", () => LanConnectSaveManagerPatches.Apply(HarmonyInstance))) applied++; else failed++;
         if (TryApplyGroup("DifficultyScaling", () => DifficultyScalingPatches.Apply(HarmonyInstance))) applied++; else failed++;
         if (TryApplyGroup("RestSite", () => RestSitePatches.Apply(HarmonyInstance))) applied++; else failed++;
         if (TryApplyGroup("Merchant", () => MerchantPatches.Apply(HarmonyInstance))) applied++; else failed++;
