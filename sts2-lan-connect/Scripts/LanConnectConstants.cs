@@ -18,7 +18,7 @@ internal static class LanConnectConstants
 
     public const int Legacy4pSlotIdBits = VanillaSlotIdBits;
 
-    public const int ExtendedSlotIdBits = 4;
+    public const int ExtendedSlotIdBits = VanillaSlotIdBits;
 
     public const int VanillaLobbyListBits = 3;
 

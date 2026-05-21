@@ -8,6 +8,7 @@ using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Multiplayer.Serialization;
+using MegaCrit.Sts2.Core.Saves.Runs;
 
 namespace Sts2LanConnect.Scripts;
 
@@ -43,6 +44,9 @@ internal static class LanConnectSerializationPatches
 
     private static readonly MethodInfo? GetActiveLobbyListBitWidth =
         AccessTools.Method(typeof(LanConnectProtocolProfiles), nameof(LanConnectProtocolProfiles.GetActiveLobbyListBitWidth));
+
+    private static readonly FieldInfo? PacketReaderBitPositionField =
+        AccessTools.Field(typeof(PacketReader), "<BitPosition>k__BackingField");
 
     public static void Apply()
     {
@@ -90,6 +94,28 @@ internal static class LanConnectSerializationPatches
         }
     }
 
+    private static void TrySafePrefixPatch(MethodInfo? target, string prefixName, string label)
+    {
+        if (target == null)
+        {
+            Log.Warn($"sts2_lan_connect serialization: target method not found, skipping patch: {label}");
+            _failedCount++;
+            return;
+        }
+
+        try
+        {
+            HarmonyInstance.Patch(target, prefix: new HarmonyMethod(
+                typeof(LanConnectSerializationPatches), prefixName));
+            _patchedCount++;
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"sts2_lan_connect serialization: failed to patch {label}: {ex}");
+            _failedCount++;
+        }
+    }
+
     private static void PatchLobbyPlayerSlotId()
     {
         TrySafePatch(
@@ -116,13 +142,13 @@ internal static class LanConnectSerializationPatches
 
     private static void PatchLobbyBeginRunList()
     {
-        TrySafePatch(
+        TrySafePrefixPatch(
             AccessTools.Method(typeof(LobbyBeginRunMessage), nameof(LobbyBeginRunMessage.Serialize)),
-            nameof(TranspileBeginRunSerialize),
+            nameof(LobbyBeginRunSerializePrefix),
             "LobbyBeginRunMessage.Serialize");
-        TrySafePatch(
+        TrySafePrefixPatch(
             AccessTools.Method(typeof(LobbyBeginRunMessage), nameof(LobbyBeginRunMessage.Deserialize)),
-            nameof(TranspileBeginRunDeserialize),
+            nameof(LobbyBeginRunDeserializePrefix),
             "LobbyBeginRunMessage.Deserialize");
     }
 
@@ -156,19 +182,92 @@ internal static class LanConnectSerializationPatches
             GetActiveLobbyListBitWidth,
             nameof(TranspileJoinResponseDeserialize));
 
-    private static IEnumerable<CodeInstruction> TranspileBeginRunSerialize(IEnumerable<CodeInstruction> instructions)
-        => LanConnectTranspilerUtils.ReplaceBitWidthBeforeCallWithProvider(instructions,
-            WriteListWithBits,
-            LanConnectConstants.VanillaLobbyListBits,
-            GetActiveLobbyListBitWidth,
-            nameof(TranspileBeginRunSerialize));
+    private static bool LobbyBeginRunSerializePrefix(ref LobbyBeginRunMessage __instance, PacketWriter writer)
+    {
+        if (__instance.playersInLobby == null)
+        {
+            throw new InvalidOperationException("Tried to serialize LobbyBeginRunMessage with null player list.");
+        }
 
-    private static IEnumerable<CodeInstruction> TranspileBeginRunDeserialize(IEnumerable<CodeInstruction> instructions)
-        => LanConnectTranspilerUtils.ReplaceBitWidthBeforeCallWithProvider(instructions,
-            ReadListWithBits,
-            LanConnectConstants.VanillaLobbyListBits,
-            GetActiveLobbyListBitWidth,
-            nameof(TranspileBeginRunDeserialize));
+        int listBits = LanConnectProtocolProfiles.GetActiveLobbyListBitWidth();
+        int startBit = writer.BitPosition;
+        writer.WriteList(__instance.playersInLobby, listBits);
+        writer.WriteString(__instance.seed);
+        writer.WriteList(__instance.modifiers);
+        writer.WriteString(__instance.act1);
+        Log.Info(
+            $"sts2_lan_connect serialization: LobbyBeginRun serialize players={__instance.playersInLobby.Count} " +
+            $"listBits={listBits} bits={startBit}->{writer.BitPosition}");
+        return false;
+    }
+
+    private static bool LobbyBeginRunDeserializePrefix(ref LobbyBeginRunMessage __instance, PacketReader reader)
+    {
+        int activeBits = LanConnectProtocolProfiles.GetActiveLobbyListBitWidth();
+        int fallbackBits = activeBits == LanConnectConstants.VanillaLobbyListBits
+            ? LanConnectConstants.ExtendedLobbyListBits
+            : LanConnectConstants.VanillaLobbyListBits;
+        int startBit = reader.BitPosition;
+
+        if (TryDeserializeLobbyBeginRun(ref __instance, reader, activeBits, startBit, "active", out Exception? activeException))
+        {
+            return false;
+        }
+
+        Exception activeFailure = activeException
+            ?? new InvalidOperationException("LobbyBeginRun active deserialization failed without an exception.");
+
+        if (TryDeserializeLobbyBeginRun(ref __instance, reader, fallbackBits, startBit, "fallback", out Exception? fallbackException))
+        {
+            Log.Warn(
+                $"sts2_lan_connect serialization: LobbyBeginRun recovered using fallback listBits={fallbackBits} " +
+                $"after active listBits={activeBits} failed: {activeFailure.GetType().Name}: {activeFailure.Message}");
+            return false;
+        }
+
+        SetReaderBitPosition(reader, startBit);
+        throw new InvalidOperationException(
+            $"Failed to deserialize LobbyBeginRunMessage with active listBits={activeBits} or fallback listBits={fallbackBits}. " +
+            $"Active error: {activeFailure.GetType().Name}: {activeFailure.Message}; " +
+            $"Fallback error: {fallbackException?.GetType().Name}: {fallbackException?.Message}",
+            activeFailure);
+    }
+
+    private static bool TryDeserializeLobbyBeginRun(
+        ref LobbyBeginRunMessage message,
+        PacketReader reader,
+        int listBits,
+        int startBit,
+        string source,
+        out Exception? exception)
+    {
+        SetReaderBitPosition(reader, startBit);
+        try
+        {
+            message.playersInLobby = reader.ReadList<LobbyPlayer>(listBits);
+            message.seed = reader.ReadString();
+            message.modifiers = reader.ReadList<SerializableModifier>();
+            message.act1 = reader.ReadString();
+            exception = null;
+            Log.Info(
+                $"sts2_lan_connect serialization: LobbyBeginRun deserialize source={source} " +
+                $"players={message.playersInLobby.Count} listBits={listBits} bits={startBit}->{reader.BitPosition}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            exception = ex;
+            Log.Warn(
+                $"sts2_lan_connect serialization: LobbyBeginRun deserialize failed source={source} " +
+                $"listBits={listBits}: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static void SetReaderBitPosition(PacketReader reader, int bitPosition)
+    {
+        PacketReaderBitPositionField?.SetValue(reader, bitPosition);
+    }
 
     // ReSharper restore UnusedMember.Local
 }

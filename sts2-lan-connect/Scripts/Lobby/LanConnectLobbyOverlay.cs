@@ -2460,6 +2460,7 @@ internal sealed partial class LanConnectLobbyOverlay : Control
                 return;
             }
             selectedMaxPlayers = parsedMaxPlayers;
+            LanConnectConfig.MaxPlayers = parsedMaxPlayers;
         }
 
         _actionInFlight = true;

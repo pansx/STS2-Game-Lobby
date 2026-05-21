@@ -115,7 +115,8 @@ internal static class LanConnectProtocolProfiles
 
     public static void ResetActiveProfile(string source)
     {
-        SetActiveProfile(DefaultProfile, LanConnectMultiplayerCompatibility.GetEffectiveMaxPlayers(), source);
+        int effectiveMaxPlayers = LanConnectMultiplayerCompatibility.GetEffectiveMaxPlayers();
+        SetActiveProfile(DetermineProfileForMaxPlayers(effectiveMaxPlayers), effectiveMaxPlayers, source);
     }
 
     public static int GetActiveSlotIdBitWidth()
