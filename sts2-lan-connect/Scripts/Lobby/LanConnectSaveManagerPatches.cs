@@ -24,24 +24,27 @@ internal static class LanConnectSaveManagerPatches
 
     private static void PatchBaseLibUnknownCharacterGuard(Harmony harmony)
     {
-        try
-        {
-            Type? guardType = AccessTools.TypeByName("BaseLib.Patches.Compatibility.UnknownCharacterPatches+IgnoreUnknownCoopRun")
+        Type? guardType = AccessTools.TypeByName("BaseLib.Patches.Compatibility.UnknownCharacterPatches+IgnoreUnknownCoopRun")
             ?? AccessTools.TypeByName("BaseLib.Patches.Compatibility.IgnoreUnknownCoopRun")
             ?? AccessTools.TypeByName("BaseLib.Patches.Compatibility.UnknownCharacterPatches.IgnoreUnknownCoopRun");
-            MethodInfo? guardMethod = guardType == null
-                ? null
-                : AccessTools.Method(guardType, "SkipUnknownCharacter");
+        if (guardType == null)
+        {
+            return;
+        }
+
+        try
+        {
+            MethodInfo? guardMethod = AccessTools.Method(guardType, "SkipUnknownCharacter");
             if (guardMethod == null)
             {
-                Log.Warn("sts2_lan_connect save_manager: BaseLib unknown-character save guard not found.");
+                Log.Warn($"sts2_lan_connect save_manager: BaseLib unknown-character save guard method not found on type={guardType.FullName}.");
                 return;
             }
 
             harmony.Patch(
                 guardMethod,
                 prefix: new HarmonyMethod(typeof(LanConnectSaveManagerPatches), nameof(BaseLibSkipUnknownCharacterPrefix)));
-            Log.Info($"sts2_lan_connect save_manager: patched BaseLib unknown-character save guard type={guardType!.FullName}.");
+            Log.Info($"sts2_lan_connect save_manager: patched BaseLib unknown-character save guard type={guardType.FullName}.");
         }
         catch (Exception ex)
         {
