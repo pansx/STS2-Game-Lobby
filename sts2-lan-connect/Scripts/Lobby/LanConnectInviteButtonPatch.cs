@@ -15,8 +15,10 @@ internal static class LanConnectInviteButtonPatch
     private const string ContinueRunInviteButtonName = "LanConnectContinueRunInviteButton";
     private const string NativeInviteContainerName = "InviteButtonContainer";
     private const string NativeInviteControlName = "InviteButton";
-    private const string RemotePlayerLoadContainerName = "RemotePlayerLoadContainer";
-    private const string PlayerListContainerName = "Container";
+    private const float ContinueRunInviteLeft = 72f;
+    private const float ContinueRunInviteTop = 96f;
+    private const float ContinueRunInviteWidth = 200f;
+    private const float ContinueRunInviteHeight = 50f;
     private const string HookedMetaKey = "sts2_lan_connect_invite_button_hooks";
     private const string ContinueRunHookedMetaKey = "sts2_lan_connect_continue_run_invite_button_hooks";
     private const string NativeInviteManagedMetaKey = "sts2_lan_connect_native_invite_button_managed";
@@ -225,6 +227,7 @@ internal static class LanConnectInviteButtonPatch
         if (existing != null)
         {
             existing.Visible = true;
+            ReparentAndPositionContinueRunInvite(screen, existing);
             if (nativeInvite != null)
             {
                 RepurposeNativeInviteButton(nativeInvite);
@@ -236,15 +239,9 @@ internal static class LanConnectInviteButtonPatch
             return;
         }
 
-        Control? parent = FindContinueRunInviteParent(screen);
-        if (parent == null)
-        {
-            Log.Warn("sts2_lan_connect: continue-run invite parent not found.");
-            return;
-        }
-
         Control inviteControl = CreateContinueRunInviteControl();
-        parent.AddChild(inviteControl);
+        screen.AddChild(inviteControl);
+        ReparentAndPositionContinueRunInvite(screen, inviteControl);
         Log.Info($"sts2_lan_connect: continue-run invite button created via {source}");
         QueueEnsureContinueRunInviteButton(screen, "continue_invite_created");
     }
@@ -294,15 +291,26 @@ internal static class LanConnectInviteButtonPatch
         return root.FindChild(NativeInviteControlName, recursive: true, owned: false) as Control;
     }
 
-    private static Control? FindContinueRunInviteParent(Node root)
+    private static void ReparentAndPositionContinueRunInvite(Control screen, Control inviteControl)
     {
-        Control? remotePlayerContainer = root.FindChild(RemotePlayerLoadContainerName, recursive: true, owned: false) as Control;
-        if (remotePlayerContainer?.FindChild(PlayerListContainerName, recursive: false, owned: false) is Control listContainer)
+        if (inviteControl.GetParent() != screen)
         {
-            return listContainer;
+            inviteControl.GetParent()?.RemoveChild(inviteControl);
+            screen.AddChild(inviteControl);
         }
 
-        return remotePlayerContainer;
+        inviteControl.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+        inviteControl.AnchorLeft = 0f;
+        inviteControl.AnchorRight = 0f;
+        inviteControl.AnchorTop = 0f;
+        inviteControl.AnchorBottom = 0f;
+        inviteControl.OffsetLeft = ContinueRunInviteLeft;
+        inviteControl.OffsetTop = ContinueRunInviteTop;
+        inviteControl.OffsetRight = ContinueRunInviteLeft + ContinueRunInviteWidth;
+        inviteControl.OffsetBottom = ContinueRunInviteTop + ContinueRunInviteHeight;
+        inviteControl.CustomMinimumSize = new Vector2(ContinueRunInviteWidth, ContinueRunInviteHeight);
+        inviteControl.MouseFilter = Control.MouseFilterEnum.Pass;
+        inviteControl.ZIndex = 25;
     }
 
     private static bool OnNativeInviteReleasePrefix(NInvitePlayersButton __instance)
@@ -522,7 +530,7 @@ internal static class LanConnectInviteButtonPatch
             Name = NativeInviteControlName,
             Text = "大厅邀请",
             TooltipText = "生成邀请码并复制到剪贴板，发给朋友即可一键加入。",
-            CustomMinimumSize = new Vector2(200f, 50f),
+            CustomMinimumSize = new Vector2(ContinueRunInviteWidth, ContinueRunInviteHeight),
             MouseFilter = Control.MouseFilterEnum.Stop,
         };
 
@@ -542,10 +550,10 @@ internal static class LanConnectInviteButtonPatch
         inviteButton.AnchorRight = 0.5f;
         inviteButton.AnchorTop = 0f;
         inviteButton.AnchorBottom = 0f;
-        inviteButton.OffsetLeft = -100f;
-        inviteButton.OffsetRight = 100f;
+        inviteButton.OffsetLeft = 0f;
+        inviteButton.OffsetRight = ContinueRunInviteWidth;
         inviteButton.OffsetTop = 0f;
-        inviteButton.OffsetBottom = 50f;
+        inviteButton.OffsetBottom = ContinueRunInviteHeight;
         container.Visible = true;
         container.AddChild(inviteButton);
         return container;
