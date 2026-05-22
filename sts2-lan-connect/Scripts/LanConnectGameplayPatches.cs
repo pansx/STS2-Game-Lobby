@@ -37,6 +37,16 @@ internal static class LanConnectGameplayPatches
         Log.Info($"sts2_lan_connect gameplay: patch groups applied={applied}, failed={failed}.");
     }
 
+    public static void RetryDeferredPatches(string source)
+    {
+        if (!_initialized || LanConnectExternalModDetection.IsRmpModLoaded)
+        {
+            return;
+        }
+
+        TryApplyGroup($"deferred SaveManager ({source})", () => LanConnectSaveManagerPatches.RetryDeferredPatches(source));
+    }
+
     private static bool TryApplyGroup(string groupName, Action apply)
     {
         try

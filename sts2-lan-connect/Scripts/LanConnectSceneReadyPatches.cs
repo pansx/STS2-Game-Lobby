@@ -154,11 +154,13 @@ internal static class LanConnectSceneReadyPatches
     {
         EnsureDeferredAndroidPatches();
         LanConnectContinueRunLobbyAutoPublisher.ScheduleEnsureAutoPublish(__instance, "ready_postfix");
+        LanConnectInviteButtonPatch.ScheduleEnsureInviteButton(__instance, "custom_load_ready_postfix");
     }
 
     private static void OnDailyRunLoadScreenReady(NDailyRunLoadScreen __instance)
     {
         LanConnectContinueRunLobbyAutoPublisher.ScheduleEnsureAutoPublish(__instance, "ready_postfix");
+        LanConnectInviteButtonPatch.ScheduleEnsureInviteButton(__instance, "daily_load_ready_postfix");
     }
 
     private static void OnCharacterSelectReady(NCharacterSelectScreen __instance)

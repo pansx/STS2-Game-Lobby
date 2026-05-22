@@ -190,6 +190,9 @@ internal static class LanConnectInviteButtonPatch
         Control? nativeInviteContainer = existing == null ? FindNativeInviteContainer(screen) : FindNativeInviteContainer(existing);
         Control? nativeInviteControl = existing == null ? FindNativeInviteControl(screen, nativeInviteContainer) : FindNativeInviteControl(existing, nativeInviteContainer);
         NInvitePlayersButton? nativeInvite = nativeInviteControl as NInvitePlayersButton ?? FindNativeInviteButton(screen);
+        bool nativeInsideManagedInvite = existing != null
+            && ((nativeInvite != null && IsDescendantOf(nativeInvite, existing))
+                || (nativeInviteControl != null && IsDescendantOf(nativeInviteControl, existing)));
         bool shouldShow = LanConnectLobbyRuntime.Instance?.HasActiveHostedRoom == true;
         if (!shouldShow)
         {
@@ -206,7 +209,11 @@ internal static class LanConnectInviteButtonPatch
         {
             if (existing != null)
             {
-                existing.Visible = false;
+                existing.Visible = nativeInsideManagedInvite;
+                if (nativeInsideManagedInvite)
+                {
+                    ReparentAndPositionContinueRunInvite(screen, existing);
+                }
             }
 
             RepurposeNativeInviteButton(nativeInvite);
@@ -217,7 +224,11 @@ internal static class LanConnectInviteButtonPatch
         {
             if (existing != null)
             {
-                existing.Visible = false;
+                existing.Visible = nativeInsideManagedInvite;
+                if (nativeInsideManagedInvite)
+                {
+                    ReparentAndPositionContinueRunInvite(screen, existing);
+                }
             }
 
             RepurposeNativeInviteControl(nativeInviteControl, nativeInviteContainer);
@@ -255,6 +266,22 @@ internal static class LanConnectInviteButtonPatch
 
         NInvitePlayersButton? nativeInvite = FindNativeInviteButton(screen);
         return nativeInvite != null && nativeInvite.HasMeta(NativeInviteManagedMetaKey);
+    }
+
+    private static bool IsDescendantOf(Node node, Node ancestor)
+    {
+        Node? current = node;
+        while (current != null)
+        {
+            if (ReferenceEquals(current, ancestor))
+            {
+                return true;
+            }
+
+            current = current.GetParent();
+        }
+
+        return false;
     }
 
     private static NInvitePlayersButton? FindNativeInviteButton(Node root)

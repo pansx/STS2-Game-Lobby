@@ -4,6 +4,7 @@ using System.Reflection;
 using HarmonyLib;
 using Godot;
 using MegaCrit.Sts2.Core.Logging;
+using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Platform;
 using MegaCrit.Sts2.Core.Runs;
@@ -16,20 +17,76 @@ internal static class LanConnectSaveManagerPatches
 {
     private static readonly FieldInfo? RunSaveManagerField = typeof(SaveManager).GetField("_runSaveManager", BindingFlags.Instance | BindingFlags.NonPublic);
     private static readonly MethodInfo? LoadMultiplayerRunSaveMethod = RunSaveManagerField?.FieldType.GetMethod("LoadMultiplayerRunSave", BindingFlags.Instance | BindingFlags.Public);
+    private static Harmony? _harmony;
+    private static bool _baseLibGuardPatched;
+    private static bool _baseLibDetectionSubscribed;
+    private static bool _baseLibMissingLogged;
+    private static bool _baseLibGuardMissingLogged;
 
     public static void Apply(Harmony harmony)
     {
-        PatchBaseLibUnknownCharacterGuard(harmony);
+        _harmony = harmony;
+        SubscribeBaseLibDetection();
+        TryPatchBaseLibUnknownCharacterGuard("init", logMissing: false);
     }
 
-    private static void PatchBaseLibUnknownCharacterGuard(Harmony harmony)
+    public static void RetryDeferredPatches(string source)
+    {
+        if (_harmony == null || _baseLibGuardPatched)
+        {
+            return;
+        }
+
+        TryPatchBaseLibUnknownCharacterGuard(source, logMissing: true);
+    }
+
+    private static void SubscribeBaseLibDetection()
+    {
+        if (_baseLibDetectionSubscribed)
+        {
+            return;
+        }
+
+        ModManager.OnModDetected += OnModDetected;
+        _baseLibDetectionSubscribed = true;
+    }
+
+    private static void UnsubscribeBaseLibDetection()
+    {
+        if (!_baseLibDetectionSubscribed)
+        {
+            return;
+        }
+
+        ModManager.OnModDetected -= OnModDetected;
+        _baseLibDetectionSubscribed = false;
+    }
+
+    private static void OnModDetected(Mod mod)
+    {
+        if (_harmony == null || _baseLibGuardPatched || !IsBaseLibMod(mod))
+        {
+            return;
+        }
+
+        TryPatchBaseLibUnknownCharacterGuard("mod_detected", logMissing: true);
+    }
+
+    private static bool IsBaseLibMod(Mod mod)
+    {
+        return string.Equals(mod.manifest?.id, "BaseLib", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(mod.assembly?.GetName().Name, "BaseLib", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryPatchBaseLibUnknownCharacterGuard(string source, bool logMissing)
     {
         Type? guardType = AccessTools.TypeByName("BaseLib.Patches.Compatibility.UnknownCharacterPatches+IgnoreUnknownCoopRun")
             ?? AccessTools.TypeByName("BaseLib.Patches.Compatibility.IgnoreUnknownCoopRun")
             ?? AccessTools.TypeByName("BaseLib.Patches.Compatibility.UnknownCharacterPatches.IgnoreUnknownCoopRun");
         if (guardType == null)
         {
-            return;
+            LogMissingBaseLibGuard(source, logMissing);
+            return false;
         }
 
         try
@@ -38,17 +95,48 @@ internal static class LanConnectSaveManagerPatches
             if (guardMethod == null)
             {
                 Log.Warn($"sts2_lan_connect save_manager: BaseLib unknown-character save guard method not found on type={guardType.FullName}.");
-                return;
+                return false;
             }
 
-            harmony.Patch(
+            _harmony!.Patch(
                 guardMethod,
                 prefix: new HarmonyMethod(typeof(LanConnectSaveManagerPatches), nameof(BaseLibSkipUnknownCharacterPrefix)));
-            Log.Info($"sts2_lan_connect save_manager: patched BaseLib unknown-character save guard type={guardType.FullName}.");
+            _baseLibGuardPatched = true;
+            UnsubscribeBaseLibDetection();
+            Log.Info($"sts2_lan_connect save_manager: patched BaseLib unknown-character save guard type={guardType.FullName}, source={source}.");
+            return true;
         }
         catch (Exception ex)
         {
             Log.Error($"sts2_lan_connect save_manager: failed to patch BaseLib unknown-character save guard: {ex}");
+            return false;
+        }
+    }
+
+    private static void LogMissingBaseLibGuard(string source, bool logMissing)
+    {
+        if (!logMissing)
+        {
+            return;
+        }
+
+        bool baseLibLoaded = AppDomain.CurrentDomain.GetAssemblies()
+            .Any(static assembly => string.Equals(assembly.GetName().Name, "BaseLib", StringComparison.OrdinalIgnoreCase));
+        if (!baseLibLoaded)
+        {
+            if (!_baseLibMissingLogged)
+            {
+                _baseLibMissingLogged = true;
+                Log.Info($"sts2_lan_connect save_manager: optional BaseLib compatibility patch skipped because BaseLib is not loaded, source={source}.");
+            }
+
+            return;
+        }
+
+        if (!_baseLibGuardMissingLogged)
+        {
+            _baseLibGuardMissingLogged = true;
+            Log.Warn($"sts2_lan_connect save_manager: BaseLib is loaded but unknown-character save guard type was not found, source={source}.");
         }
     }
 

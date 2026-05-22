@@ -106,6 +106,7 @@ internal sealed partial class LanConnectLobbyRuntime : Node
         Instance = this;
         LanConnectProtocolProfiles.ResetActiveProfile("runtime_ready");
         SaveManager.Instance.Saved += OnRunSaved;
+        LanConnectGameplayPatches.RetryDeferredPatches("runtime_ready");
         LanConnectSaveDiagnostics.LogNow("runtime_ready");
         Log.Info("sts2_lan_connect lobby runtime ready.");
         // The picker is no longer triggered at runtime startup. It opens only

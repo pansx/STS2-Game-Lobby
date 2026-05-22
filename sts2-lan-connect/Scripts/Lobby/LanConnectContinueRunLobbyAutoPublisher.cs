@@ -102,6 +102,7 @@ internal static class LanConnectContinueRunLobbyAutoPublisher
         if (LanConnectLobbyRuntime.Instance?.IsManagingNetService(context.NetService) == true)
         {
             CompletedScreens.Add(instanceId);
+            LanConnectInviteButtonPatch.ScheduleEnsureInviteButton(screen, "continue_save_already_managed");
             GD.Print($"sts2_lan_connect continue_run_publish: runtime already manages this host screen={context.ScreenType}");
             return;
         }
